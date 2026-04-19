@@ -20,7 +20,7 @@ except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
 
 st.set_page_config(page_title="Money Clarity OS", page_icon="💰", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="collapsed")
 
 # ── Core palette ──────────────────────────────────────────────────────────────
 C_GREEN  = "#16a34a"   # positive — savings, surplus, growth
@@ -41,7 +41,8 @@ st.markdown(f"""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   html, body, [class*="css"] {{ font-family: 'Inter', system-ui, sans-serif; }}
-  .block-container {{ padding-top: 2rem; padding-bottom: 3rem; background: #ffffff; }}
+  .block-container {{ padding-top: 1.5rem; padding-bottom: 3rem; background: #ffffff;
+                      padding-left: 1rem !important; padding-right: 1rem !important; }}
   section[data-testid="stSidebar"] {{ background: {C_GREY_BG}; border-right: 1px solid #e5e7eb; }}
   section[data-testid="stSidebar"] > div {{ padding-top: 1.5rem; }}
 
@@ -50,43 +51,53 @@ st.markdown(f"""
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 12px;
-    padding: 1.2rem 1rem;
+    padding: 1rem 0.75rem;
     text-align: center;
     transition: box-shadow 0.15s;
+    margin-bottom: 0.5rem;
   }}
   .kpi:hover {{ box-shadow: 0 4px 12px rgba(0,0,0,0.06); }}
-  .kpi-label {{ font-size: 0.68rem; color: {C_GREY}; text-transform: uppercase;
-               letter-spacing: 0.12em; margin-bottom: 0.3rem; }}
-  .kpi-val   {{ font-size: 1.55rem; font-weight: 700; color: #111; line-height: 1; }}
-  .kpi-delta {{ font-size: 0.74rem; margin-top: 0.3rem; font-weight: 500; }}
-  .green  {{ color: {C_GREEN}; }}
-  .red    {{ color: {C_RED}; }}
-  .blue   {{ color: {C_BLUE}; }}
-  .muted  {{ color: {C_GREY}; }}
+  .kpi-label {{ font-size: 0.65rem; color: {C_GREY}; text-transform: uppercase;
+               letter-spacing: 0.1em; margin-bottom: 0.25rem; }}
+  .kpi-val   {{ font-size: 1.35rem; font-weight: 700; color: #111; line-height: 1; }}
+  .kpi-delta {{ font-size: 0.7rem; margin-top: 0.25rem; font-weight: 500; }}
+  .green {{ color: {C_GREEN}; }}
+  .red   {{ color: {C_RED}; }}
+  .blue  {{ color: {C_BLUE}; }}
+  .muted {{ color: {C_GREY}; }}
+
+  /* KPI grid — 2 cols on mobile, 5 on desktop */
+  .kpi-grid {{
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }}
 
   /* Insight banner */
   .insight-box {{
     background: {C_BLUE_BG};
     border-left: 4px solid {C_BLUE};
     border-radius: 0 10px 10px 0;
-    padding: 0.9rem 1.3rem;
+    padding: 0.85rem 1.1rem;
     margin-bottom: 1.2rem;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
     color: #1e3a5f;
+    line-height: 1.6;
   }}
 
   /* Section header */
   .section-header {{
     display: flex; align-items: center; gap: 0.6rem;
-    margin: 2.5rem 0 1.2rem;
+    margin: 2rem 0 1rem;
     border-bottom: 1px solid #e5e7eb;
-    padding-bottom: 0.6rem;
+    padding-bottom: 0.5rem;
   }}
-  .section-header h3 {{ margin: 0; font-size: 1rem; font-weight: 600; color: #111; }}
+  .section-header h3 {{ margin: 0; font-size: 0.95rem; font-weight: 600; color: #111; }}
   .section-header .pill {{
     background: {C_BLUE_BG}; color: {C_BLUE};
-    font-size: 0.68rem; font-weight: 600;
-    padding: 0.18rem 0.65rem; border-radius: 20px; letter-spacing: 0.06em;
+    font-size: 0.65rem; font-weight: 600;
+    padding: 0.15rem 0.6rem; border-radius: 20px; letter-spacing: 0.06em;
   }}
 
   /* Welcome card */
@@ -94,20 +105,72 @@ st.markdown(f"""
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 16px;
-    padding: 2.5rem 3rem;
+    padding: 2rem 1.5rem;
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
   }}
-  .welcome h2 {{ font-size: 1.5rem; color: #111; margin-bottom: 0.5rem; font-weight: 700; }}
-  .welcome p  {{ color: {C_GREY}; font-size: 0.92rem; margin-bottom: 1.5rem; }}
-  .steps-row  {{ display: flex; gap: 1.2rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }}
+  .welcome h2 {{ font-size: 1.3rem; color: #111; margin-bottom: 0.5rem; font-weight: 700; }}
+  .welcome p  {{ color: {C_GREY}; font-size: 0.88rem; margin-bottom: 1rem; }}
+  .steps-row  {{ display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-top: 1rem; }}
   .step-card  {{
     background: {C_GREY_BG}; border: 1px solid #e5e7eb; border-radius: 12px;
-    padding: 1.2rem 1.4rem; width: 175px; text-align: center;
+    padding: 1rem; width: 160px; text-align: center;
   }}
-  .step-num   {{ font-size: 1.5rem; margin-bottom: 0.4rem; }}
-  .step-title {{ font-weight: 600; font-size: 0.83rem; color: #111; margin-bottom: 0.25rem; }}
-  .step-desc  {{ font-size: 0.76rem; color: {C_GREY}; }}
+  .step-num   {{ font-size: 1.4rem; margin-bottom: 0.3rem; }}
+  .step-title {{ font-weight: 600; font-size: 0.8rem; color: #111; margin-bottom: 0.2rem; }}
+  .step-desc  {{ font-size: 0.73rem; color: {C_GREY}; }}
+
+  /* ── Mobile overrides ── */
+  @media (max-width: 768px) {{
+    .block-container {{ padding-top: 0.75rem !important; padding-left: 0.75rem !important;
+                        padding-right: 0.75rem !important; }}
+
+    /* KPI grid → 2 columns */
+    .kpi-grid {{ grid-template-columns: repeat(2, 1fr); }}
+    .kpi-val  {{ font-size: 1.15rem; }}
+    .kpi-label {{ font-size: 0.6rem; }}
+
+    /* Welcome */
+    .welcome {{ padding: 1.5rem 1rem; }}
+    .welcome h2 {{ font-size: 1.1rem; }}
+    .step-card {{ width: 140px; padding: 0.85rem; }}
+
+    /* Insight → stack insights vertically */
+    .insight-box {{ font-size: 0.78rem; }}
+
+    /* Section header */
+    .section-header {{ margin: 1.5rem 0 0.75rem; }}
+    .section-header h3 {{ font-size: 0.85rem; }}
+    .section-header .pill {{ display: none; }}
+
+    /* Plotly charts — enforce full width */
+    .stPlotlyChart {{ width: 100% !important; }}
+
+    /* Stack Streamlit columns vertically on mobile */
+    [data-testid="stColumns"] {{ flex-direction: column !important; }}
+    [data-testid="stColumn"]  {{ width: 100% !important; flex: 1 1 100% !important;
+                                  min-width: 100% !important; }}
+
+    /* Hide chart mode bar on mobile */
+    .modebar {{ display: none !important; }}
+
+    /* Dataframe → horizontal scroll */
+    [data-testid="stDataFrame"] {{ overflow-x: auto; }}
+
+    /* Buttons full width */
+    .stButton > button {{ width: 100%; }}
+
+    /* Text inputs full width */
+    .stTextInput {{ width: 100% !important; }}
+  }}
+
+  @media (max-width: 480px) {{
+    .kpi-grid {{ grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }}
+    .kpi {{ padding: 0.75rem 0.5rem; }}
+    .kpi-val {{ font-size: 1rem; }}
+    .steps-row {{ gap: 0.75rem; }}
+    .step-card {{ width: 100%; max-width: 100%; }}
+  }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -688,7 +751,7 @@ if avail_exp:
     fig_stack.update_layout(height=360, margin=dict(t=20,b=10),
                             legend=dict(orientation="h", y=-0.18),
                             plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-    st.plotly_chart(fig_stack, width="stretch")
+    st.plotly_chart(fig_stack, width="stretch", config={"displayModeBar": False, "responsive": True})
 
 # ── Savings & Net Cash ────────────────────────────────────────────────────────
 st.markdown('<div class="section-header"><h3>Savings & Net Position</h3><span class="pill">FINANCIAL HEALTH</span></div>', unsafe_allow_html=True)
@@ -708,7 +771,7 @@ with sa:
         fig_sav.update_layout(height=300, margin=dict(t=40,b=10),
                                legend=dict(orientation="h", y=-0.2),
                                plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-        st.plotly_chart(fig_sav, width="stretch")
+        st.plotly_chart(fig_sav, width="stretch", config={"displayModeBar": False, "responsive": True})
 
 with sb:
     if "Net Cash" in use_df.columns:
@@ -725,7 +788,7 @@ with sb:
                                title="Net Cash by Month (green = surplus)",
                                yaxis_title="₹", xaxis_title="",
                                plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-        st.plotly_chart(fig_net, width="stretch")
+        st.plotly_chart(fig_net, width="stretch", config={"displayModeBar": False, "responsive": True})
 
 # ── Salary vs Outgoing ────────────────────────────────────────────────────────
 trend_cols = ["Month","Salary","Outgoing (Debits)","Incoming (Credits)"]
@@ -738,7 +801,7 @@ fig_trend  = px.bar(melted_t, x="Month", y="Amount", color="Type", barmode="grou
 fig_trend.update_layout(height=300, margin=dict(t=40,b=10),
                          legend=dict(orientation="h", y=-0.2),
                          plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-st.plotly_chart(fig_trend, width="stretch")
+st.plotly_chart(fig_trend, width="stretch", config={"displayModeBar": False, "responsive": True})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -798,7 +861,7 @@ if data_loaded:
                     texttemplate="<b>%{label}</b><br>₹%{value:,.0f}<br>%{customdata[0]}%",
                     textfont_size=12)
                 fig_tree.update_layout(height=340, margin=dict(t=40,b=5), coloraxis_showscale=False)
-                st.plotly_chart(fig_tree, width="stretch")
+                st.plotly_chart(fig_tree, width="stretch", config={"displayModeBar": False, "responsive": True})
 
         with r1b:
             mo_exp = expenses.groupby("Month")["Debit"].sum().reset_index()
@@ -813,7 +876,7 @@ if data_loaded:
                                   title="Spend by Month  🔴 = highest",
                                   yaxis_title="₹", xaxis_title="",
                                   plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-            st.plotly_chart(fig_mo, width="stretch")
+            st.plotly_chart(fig_mo, width="stretch", config={"displayModeBar": False, "responsive": True})
 
         r2a, r2b = st.columns(2)
         with r2a:
@@ -830,7 +893,7 @@ if data_loaded:
                                  yaxis=dict(autorange="reversed"),
                                  coloraxis_showscale=False,
                                  plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-            st.plotly_chart(fig_m, width="stretch")
+            st.plotly_chart(fig_m, width="stretch", config={"displayModeBar": False, "responsive": True})
 
         with r2b:
             exp_dow = expenses.copy()
@@ -848,7 +911,7 @@ if data_loaded:
                                    title="When do I spend most?  🔴 = peak day",
                                    yaxis_title="₹", xaxis_title="",
                                    plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-            st.plotly_chart(fig_dow, width="stretch")
+            st.plotly_chart(fig_dow, width="stretch", config={"displayModeBar": False, "responsive": True})
 
         # Heatmap
         st.markdown("**Spend Heatmap — Category × Month**")
@@ -861,7 +924,7 @@ if data_loaded:
                                   labels=dict(x="Month", y="Category", color="₹"))
             fig_heat.update_traces(textfont_size=11)
             fig_heat.update_layout(height=max(280, len(pivot)*36), margin=dict(t=10,b=10))
-            st.plotly_chart(fig_heat, width="stretch")
+            st.plotly_chart(fig_heat, width="stretch", config={"displayModeBar": False, "responsive": True})
 
         r4a, r4b = st.columns(2)
         with r4a:
@@ -872,7 +935,7 @@ if data_loaded:
                                 title="Daily Spending Pattern")
             fig_daily.update_layout(height=260, margin=dict(t=40,b=5),
                                      plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-            st.plotly_chart(fig_daily, width="stretch")
+            st.plotly_chart(fig_daily, width="stretch", config={"displayModeBar": False, "responsive": True})
 
         with r4b:
             mo_both = df.groupby(["Month","Type"]).agg(D=("Debit","sum"),C=("Credit","sum")).reset_index()
@@ -884,7 +947,7 @@ if data_loaded:
             fig_mo2.update_layout(height=260, margin=dict(t=40,b=5),
                                    legend=dict(orientation="h",y=-0.25),
                                    plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
-            st.plotly_chart(fig_mo2, width="stretch")
+            st.plotly_chart(fig_mo2, width="stretch", config={"displayModeBar": False, "responsive": True})
 
         # Transactions
         st.markdown('<div class="section-header"><h3>Transactions</h3><span class="pill">DRILL DOWN</span></div>', unsafe_allow_html=True)
