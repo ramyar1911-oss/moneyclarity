@@ -623,6 +623,28 @@ with st.expander(_exp_label, expanded=not data_loaded):
 data_loaded   = "stmt_df" in st.session_state
 summary_ready = "summary_df" in st.session_state
 
+# ── Privacy helper ────────────────────────────────────────────────────────────
+st.markdown("### 🔒 Concerned about sharing personal data?")
+with st.expander("Anonymize your data before uploading"):
+    st.markdown("""
+You can use ChatGPT or Claude to remove sensitive information before uploading your statement.
+
+**How to do it:**
+1. Copy your bank statement text
+2. Paste into ChatGPT or Claude with the prompt below
+3. Upload the cleaned CSV here
+""")
+    st.code("""Convert this bank statement into a CSV with columns:
+Date, Description, Debit, Credit.
+
+Remove or anonymize:
+- Names
+- Account numbers
+- PAN details
+- Employer info
+
+Keep only transaction-level data.""")
+
 # ── Welcome / empty state ─────────────────────────────────────────────────────
 if not summary_ready:
     st.markdown("""
