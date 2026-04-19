@@ -1,0 +1,904 @@
+"""
+Money Clarity Dashboard
+Run: streamlit run dashboard.py
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from io import StringIO, BytesIO
+import re
+import base64
+
+# Google OAuth / Gmail API
+try:
+    from google_auth_oauthlib.flow import Flow
+    from googleapiclient.discovery import build
+    GOOGLE_LIBS_AVAILABLE = True
+except ImportError:
+    GOOGLE_LIBS_AVAILABLE = False
+
+st.set_page_config(page_title="Money Clarity OS", page_icon="💰", layout="wide",
+                   initial_sidebar_state="expanded")
+
+# ── Core palette ──────────────────────────────────────────────────────────────
+C_GREEN  = "#16a34a"   # positive — savings, surplus, growth
+C_RED    = "#dc2626"   # negative — expenses, deficit
+C_BLUE   = "#4a72a8"   # neutral  — income, baseline
+C_GREY   = "#6b7280"   # secondary / background elements
+C_ACCENT = C_BLUE      # single accent for interactive elements
+
+C_GREEN_BG = "#f0fdf4"
+C_RED_BG   = "#fff1f2"
+C_BLUE_BG  = "#f0f4fa"
+C_GREY_BG  = "#f9fafb"
+
+# Multi-series chart palette — green, blue, grey shades, then muted variants
+PALETTE = [C_BLUE, C_GREEN, C_GREY, "#7ba3cc", "#4ade80", "#94a3b8", "#8aaed6", "#86efac"]
+
+st.markdown(f"""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  html, body, [class*="css"] {{ font-family: 'Inter', system-ui, sans-serif; }}
+  .block-container {{ padding-top: 2rem; padding-bottom: 3rem; background: #ffffff; }}
+  section[data-testid="stSidebar"] {{ background: {C_GREY_BG}; border-right: 1px solid #e5e7eb; }}
+  section[data-testid="stSidebar"] > div {{ padding-top: 1.5rem; }}
+
+  /* KPI cards */
+  .kpi {{
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 1.2rem 1rem;
+    text-align: center;
+    transition: box-shadow 0.15s;
+  }}
+  .kpi:hover {{ box-shadow: 0 4px 12px rgba(0,0,0,0.06); }}
+  .kpi-label {{ font-size: 0.68rem; color: {C_GREY}; text-transform: uppercase;
+               letter-spacing: 0.12em; margin-bottom: 0.3rem; }}
+  .kpi-val   {{ font-size: 1.55rem; font-weight: 700; color: #111; line-height: 1; }}
+  .kpi-delta {{ font-size: 0.74rem; margin-top: 0.3rem; font-weight: 500; }}
+  .green  {{ color: {C_GREEN}; }}
+  .red    {{ color: {C_RED}; }}
+  .blue   {{ color: {C_BLUE}; }}
+  .muted  {{ color: {C_GREY}; }}
+
+  /* Insight banner */
+  .insight-box {{
+    background: {C_BLUE_BG};
+    border-left: 4px solid {C_BLUE};
+    border-radius: 0 10px 10px 0;
+    padding: 0.9rem 1.3rem;
+    margin-bottom: 1.2rem;
+    font-size: 0.88rem;
+    color: #1e3a5f;
+  }}
+
+  /* Section header */
+  .section-header {{
+    display: flex; align-items: center; gap: 0.6rem;
+    margin: 2.5rem 0 1.2rem;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 0.6rem;
+  }}
+  .section-header h3 {{ margin: 0; font-size: 1rem; font-weight: 600; color: #111; }}
+  .section-header .pill {{
+    background: {C_BLUE_BG}; color: {C_BLUE};
+    font-size: 0.68rem; font-weight: 600;
+    padding: 0.18rem 0.65rem; border-radius: 20px; letter-spacing: 0.06em;
+  }}
+
+  /* Welcome card */
+  .welcome {{
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 2.5rem 3rem;
+    text-align: center;
+    margin-bottom: 2rem;
+  }}
+  .welcome h2 {{ font-size: 1.5rem; color: #111; margin-bottom: 0.5rem; font-weight: 700; }}
+  .welcome p  {{ color: {C_GREY}; font-size: 0.92rem; margin-bottom: 1.5rem; }}
+  .steps-row  {{ display: flex; gap: 1.2rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }}
+  .step-card  {{
+    background: {C_GREY_BG}; border: 1px solid #e5e7eb; border-radius: 12px;
+    padding: 1.2rem 1.4rem; width: 175px; text-align: center;
+  }}
+  .step-num   {{ font-size: 1.5rem; margin-bottom: 0.4rem; }}
+  .step-title {{ font-weight: 600; font-size: 0.83rem; color: #111; margin-bottom: 0.25rem; }}
+  .step-desc  {{ font-size: 0.76rem; color: {C_GREY}; }}
+</style>
+""", unsafe_allow_html=True)
+
+PALETTE = ["#4a72a8","#dc2626","#16a34a","#e8a838","#a36eba","#5bbfbf","#e87b5b","#c4b49a"]
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def fmt(v):
+    return f"₹{abs(v):,.0f}"
+
+def parse_inr(val):
+    if isinstance(val, (int, float)):
+        return float(val) if not pd.isna(val) else 0.0
+    v = re.sub(r"[₹,\s]", "", str(val))
+    if v.startswith("(") and v.endswith(")"):
+        v = "-" + v[1:-1]
+    try:
+        return float(v)
+    except ValueError:
+        return 0.0
+
+def delta_html(curr, prev):
+    if prev == 0:
+        return ""
+    pct = ((curr - prev) / prev) * 100
+    arrow = "↑" if pct > 0 else "↓"
+    cls = "green" if pct < 0 else "red"   # spending ↑ is bad, ↓ is good
+    return f'<div class="kpi-delta {cls}">{arrow} {abs(pct):.1f}% vs prev month</div>'
+
+def savings_delta_html(curr, prev):
+    if prev == 0:
+        return ""
+    pct = ((curr - prev) / prev) * 100
+    arrow = "↑" if pct > 0 else "↓"
+    cls = "green" if pct > 0 else "red"
+    return f'<div class="kpi-delta {cls}">{arrow} {abs(pct):.1f}% vs prev month</div>'
+
+def kpi_card(col, label, value, delta_html_str="", color=""):
+    with col:
+        st.markdown(f"""
+        <div class="kpi">
+          <div class="kpi-label">{label}</div>
+          <div class="kpi-val {color}">{fmt(value)}</div>
+          {delta_html_str}
+        </div>""", unsafe_allow_html=True)
+
+
+# ── Sample data ───────────────────────────────────────────────────────────────
+SAMPLE_DATA = pd.DataFrame({
+    "Month":                  ["Nov 2024","Dec 2024","Jan 2025","Feb 2025","Mar 2025","Apr 2025"],
+    "Salary":                 [185000,185000,192000,192000,192000,192000],
+    "Outgoing (Debits)":      [112000,138000, 98000,105000,121000, 95000],
+    "Incoming (Credits)":     [191000,185000,195000,192000,198000,192000],
+    "Net Cash":               [ 79000, 47000, 97000, 87000, 77000, 97000],
+    "Fixed (Home+Child+HH)":  [ 42000, 42000, 42000, 42000, 42000, 42000],
+    "Credit Card":            [ 28000, 45000, 18000, 22000, 31000, 16000],
+    "Swiggy Credit Card":     [  6500,  9200,  4800,  5500,  7100,  4200],
+    "Rupay Credit Card":      [  8200, 11500,  6400,  7800,  9300,  5900],
+    "GPay / UPI Sent":        [ 17500, 23000, 14200, 16800, 21000, 13800],
+    "Total Spent":            [102200,130700, 85400, 94100,110400, 81900],
+    "MF Principal":           [ 25000, 25000, 30000, 30000, 30000, 30000],
+    "MF with Interest":       [ 26800, 27500, 32200, 33100, 34500, 35800],
+    "Recurring Deposit (RD)": [ 10000, 10000, 10000, 10000, 10000, 10000],
+    "Stocks / ESPP":          [ 18500, 12000, 22000, 19500, 16800, 24000],
+    "Total Savings":          [ 55300, 49500, 64200, 62600, 61300, 69800],
+})
+
+
+# ── MF notification parser ────────────────────────────────────────────────────
+def parse_mf_notifications(text):
+    results = []
+    amount_pat = re.compile(r"(?:rs\.?|₹|inr)\s*([\d,]+)", re.I)
+    date_pat   = re.compile(
+        r"(\d{1,2}[-/]\w{3,9}[-/]\d{2,4}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\w+ \d{4})", re.I)
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        amounts = amount_pat.findall(line)
+        if not amounts:
+            continue
+        amount = float(amounts[-1].replace(",", ""))
+        date_match = date_pat.search(line)
+        try:
+            dt = pd.to_datetime(date_match.group(1), dayfirst=True) if date_match else pd.Timestamp.now()
+        except Exception:
+            dt = pd.Timestamp.now()
+        results.append({"month": dt.to_period("M").strftime("%b %Y"), "amount": amount})
+    return results
+
+
+# ── Auto-compute monthly summary from transactions ───────────────────────────
+def compute_monthly_summary(stmt_df, mf_rows=None, rd_rows=None):
+    months = sorted(stmt_df["Month"].unique())
+    mf_by_month = {}
+    rd_by_month = {}
+    if mf_rows:
+        for r in mf_rows:
+            mf_by_month[r["month"]] = mf_by_month.get(r["month"], 0) + r["amount"]
+    if rd_rows:
+        for r in rd_rows:
+            rd_by_month[r["month"]] = rd_by_month.get(r["month"], 0) + r["amount"]
+    rows = []
+    for month in months:
+        m   = stmt_df[stmt_df["Month"] == month]
+        exp = m[m["Type"] == "Expense"]
+        inc = m[m["Type"] == "Income"]
+        salary    = inc[inc["Category"] == "Salary / Income"]["Credit"].sum()
+        outgoing  = exp["Debit"].sum()
+        incoming  = inc["Credit"].sum()
+        net_cash  = incoming - outgoing
+        fixed     = exp[exp["Category"] == "Rent & Housing"]["Debit"].sum()
+        cc_bill   = exp[exp["Category"] == "Credit Card Bill"]["Debit"].sum()
+        swiggy_cc = exp[exp["Description"].str.contains("swiggy", case=False, na=False)]["Debit"].sum()
+        rupay_cc  = exp[exp["Description"].str.contains("rupay",  case=False, na=False)]["Debit"].sum()
+        upi       = exp[exp["Category"] == "UPI / GPay"]["Debit"].sum()
+        total_spent = outgoing
+        inv = exp[exp["Category"] == "Investments"]
+        mf_stmt  = inv[inv["Description"].str.contains(r"sip|mutual|mf\b|nfo|lumpsum", case=False, na=False)]["Debit"].sum()
+        rd_stmt  = inv[inv["Description"].str.contains(r"\brd\b|recurring deposit", case=False, na=False)]["Debit"].sum()
+        stocks   = inv[inv["Description"].str.contains(r"stock|espp|nsdl|cdsl|zerodha|groww|kuvera", case=False, na=False)]["Debit"].sum()
+        mf_principal = mf_by_month.get(month, mf_stmt)
+        rd_amount    = rd_by_month.get(month, rd_stmt)
+        total_savings = mf_principal + rd_amount + stocks
+        rows.append({
+            "Month":                  month,
+            "Salary":                 round(salary),
+            "Outgoing (Debits)":      round(outgoing),
+            "Incoming (Credits)":     round(incoming),
+            "Net Cash":               round(net_cash),
+            "Fixed (Home+Child+HH)":  round(fixed),
+            "Credit Card":            round(cc_bill),
+            "Swiggy Credit Card":     round(swiggy_cc),
+            "Rupay Credit Card":      round(rupay_cc),
+            "GPay / UPI Sent":        round(upi),
+            "Total Spent":            round(total_spent),
+            "MF Principal":           round(mf_principal),
+            "MF with Interest":       round(mf_principal),
+            "Recurring Deposit (RD)": round(rd_amount),
+            "Stocks / ESPP":          round(stocks),
+            "Total Savings":          round(total_savings),
+        })
+    return pd.DataFrame(rows)
+
+
+# ── Bank statement helpers ────────────────────────────────────────────────────
+CATEGORIES = {
+    "Food & Dining":    ["zomato","swiggy","blinkit","restaurant","cafe","coffee",
+                         "food","pizza","burger","kfc","mcdonalds","dominos"],
+    "Transport":        ["uber","ola","rapido","metro","irctc","redbus","petrol",
+                         "fuel","parking","makemytrip","goibibo"],
+    "Shopping":         ["amazon","flipkart","myntra","ajio","nykaa","meesho",
+                         "reliance","big bazaar","dmart"],
+    "Utilities":        ["electricity","water","broadband","jio","airtel","vi ",
+                         "bsnl","gas","wifi","tata power"],
+    "Entertainment":    ["netflix","spotify","prime","hotstar","zee5","apple",
+                         "bookmyshow","pvr","inox"],
+    "Healthcare":       ["pharmacy","hospital","clinic","doctor","medical","apollo",
+                         "medplus","1mg","pharmeasy"],
+    "Rent & Housing":   ["rent","maintenance","housing","society","landlord"],
+    "Investments":      ["mutual fund","sip","zerodha","groww","kuvera","lic",
+                         "insurance premium","rd","recurring"],
+    "Salary / Income":  ["salary","sal cr","neft cr","payroll","stipend"],
+    "UPI / GPay":       ["upi","phonepe","gpay","google pay","paytm","bhim",
+                         "neft","imps","rtgs"],
+    "Credit Card Bill": ["hdfc bank credit","icici credit","axis bank credit",
+                         "millenia","swiggy card","rupay"],
+    "Subscriptions":    ["adobe","notion","zoom","microsoft","google one",
+                         "icloud","dropbox","linkedin"],
+}
+
+def categorize(desc):
+    if not isinstance(desc, str):
+        return "Others"
+    d = desc.lower()
+    for cat, kws in CATEGORIES.items():
+        if any(kw in d for kw in kws):
+            return cat
+    return "Others"
+
+def detect_and_load(f):
+    name = f.name.lower()
+    try:
+        if name.endswith((".xlsx",".xls")):
+            raw = pd.read_excel(f, dtype=str)
+        else:
+            content = f.read().decode("utf-8", errors="replace")
+            lines = content.splitlines()
+            hi = 0
+            for i, l in enumerate(lines):
+                if re.search(r"(date|narration|description|debit|credit|amount)", l, re.I):
+                    hi = i
+                    break
+            raw = pd.read_csv(StringIO("\n".join(lines[hi:])), dtype=str)
+    except Exception as e:
+        return None, str(e)
+    raw.columns = raw.columns.str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+    date_col   = next((c for c in raw.columns if re.search(r"\bdate\b", c)), None)
+    desc_col   = next((c for c in raw.columns if re.search(r"narration|description|particular|details|remark|txn", c)), None)
+    debit_col  = next((c for c in raw.columns if re.search(r"debit|withdrawal|dr\b", c)), None)
+    credit_col = next((c for c in raw.columns if re.search(r"credit|deposit|cr\b", c)), None)
+    amt_col    = next((c for c in raw.columns if re.search(r"^amount$", c)), None)
+    if not date_col:
+        return None, "No Date column found."
+    if not desc_col:
+        return None, "No Description/Narration column found."
+    if not debit_col and not credit_col and not amt_col:
+        return None, "No Amount/Debit/Credit columns found."
+    df = pd.DataFrame()
+    df["Date"]        = pd.to_datetime(raw[date_col], errors="coerce", dayfirst=True)
+    df["Description"] = raw[desc_col].astype(str).str.strip()
+    if debit_col and credit_col:
+        df["Debit"]  = raw[debit_col].apply(parse_inr)
+        df["Credit"] = raw[credit_col].apply(parse_inr)
+        df["Amount"] = df["Credit"] - df["Debit"]
+    elif amt_col:
+        df["Amount"] = raw[amt_col].apply(parse_inr)
+        df["Debit"]  = df["Amount"].apply(lambda x: abs(x) if x < 0 else 0.0)
+        df["Credit"] = df["Amount"].apply(lambda x: x if x > 0 else 0.0)
+    else:
+        return None, "Cannot parse amounts."
+    df["Type"]     = df["Amount"].apply(lambda x: "Income" if x >= 0 else "Expense")
+    df["Category"] = df["Description"].apply(categorize)
+    df["Source"]   = f.name
+    df = df.dropna(subset=["Date"]).copy()
+    df["Date"]  = df["Date"].dt.normalize()
+    df["Month"] = df["Date"].dt.to_period("M").astype(str)
+    return df.sort_values("Date").reset_index(drop=True), ""
+
+# ── Google OAuth helpers ──────────────────────────────────────────────────────
+GMAIL_SCOPES   = ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_QUERY    = ("has:attachment ("
+                  "from:statements@hdfcbank.net OR from:alerts@icicibank.com OR "
+                  "from:statements@axisbank.com OR from:alerts@kotakbank.com OR "
+                  "subject:statement OR subject:e-statement OR subject:transaction)")
+
+def _get_oauth_config():
+    """Read client credentials from Streamlit secrets."""
+    try:
+        client_id     = st.secrets["GOOGLE_CLIENT_ID"]
+        client_secret = st.secrets["GOOGLE_CLIENT_SECRET"]
+        redirect_uri  = st.secrets.get("REDIRECT_URI", "http://localhost:8501")
+        return client_id, client_secret, redirect_uri, None
+    except Exception:
+        return None, None, None, (
+            "Google OAuth not configured. "
+            "Add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `REDIRECT_URI` "
+            "to `.streamlit/secrets.toml`."
+        )
+
+def build_oauth_flow():
+    client_id, client_secret, redirect_uri, err = _get_oauth_config()
+    if err:
+        return None, err
+    flow = Flow.from_client_config(
+        {"web": {
+            "client_id":     client_id,
+            "client_secret": client_secret,
+            "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
+            "token_uri":     "https://oauth2.googleapis.com/token",
+            "redirect_uris": [redirect_uri],
+        }},
+        scopes=GMAIL_SCOPES,
+        redirect_uri=redirect_uri,
+    )
+    return flow, None
+
+def fetch_gmail_attachments_oauth(creds, max_results=50):
+    """Fetch bank statement attachments via Gmail API using OAuth credentials."""
+    attachments, errors = [], []
+    try:
+        service  = build("gmail", "v1", credentials=creds)
+        response = service.users().messages().list(
+            userId="me", q=GMAIL_QUERY, maxResults=max_results
+        ).execute()
+        messages = response.get("messages", [])
+
+        def _extract_parts(parts, msg_id):
+            for part in parts:
+                if part.get("parts"):
+                    _extract_parts(part["parts"], msg_id)
+                fname = part.get("filename", "")
+                if fname and any(fname.lower().endswith(e) for e in [".csv",".xlsx",".xls"]):
+                    att_id = part["body"].get("attachmentId")
+                    if att_id:
+                        att  = service.users().messages().attachments().get(
+                            userId="me", messageId=msg_id, id=att_id
+                        ).execute()
+                        data = base64.urlsafe_b64decode(att["data"] + "==")
+                        attachments.append((fname, BytesIO(data)))
+
+        for ref in messages:
+            msg = service.users().messages().get(
+                userId="me", id=ref["id"], format="full"
+            ).execute()
+            _extract_parts(msg.get("payload", {}).get("parts", []), ref["id"])
+
+    except Exception as e:
+        errors.append(str(e))
+    return attachments, errors
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OAUTH CALLBACK — must run before any UI is rendered
+# ══════════════════════════════════════════════════════════════════════════════
+_params = st.query_params
+if "code" in _params and "gmail_flow" in st.session_state and GOOGLE_LIBS_AVAILABLE:
+    try:
+        _flow = st.session_state["gmail_flow"]
+        _flow.fetch_token(code=_params["code"])
+        st.session_state["gmail_creds"] = _flow.credentials
+        del st.session_state["gmail_flow"]
+        st.query_params.clear()
+        st.rerun()
+    except Exception as _e:
+        st.error(f"OAuth error: {_e}")
+        st.query_params.clear()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════════════════════
+with st.sidebar:
+    st.markdown("## 💰 Money Clarity OS")
+    st.caption("Personal Finance Dashboard")
+    st.divider()
+
+    data_loaded = "stmt_df" in st.session_state
+    summary_ready = "summary_df" in st.session_state
+
+    # Step 1
+    done1 = "✅" if data_loaded else "1"
+    st.markdown(f"**{'✅' if data_loaded else '①'}  Load Your Statements**")
+    source_mode = st.radio("", ["📁 Upload Files", "📧 Connect Gmail"],
+                           key="source_mode", label_visibility="collapsed")
+
+    frames, load_errors = [], []
+
+    if source_mode == "📁 Upload Files":
+        uploads = st.file_uploader(
+            "Bank / CC statements (CSV or XLSX)",
+            type=["csv","xlsx","xls"],
+            accept_multiple_files=True, key="stmt_upload",
+            help="Export your bank statement as CSV from your bank's net banking portal"
+        )
+        if uploads:
+            for f in uploads:
+                dff, err = detect_and_load(f)
+                if err:
+                    load_errors.append(f"**{f.name}:** {err}")
+                else:
+                    frames.append(dff)
+
+    else:
+        # ── Google OAuth flow ────────────────────────────────────────
+        if not GOOGLE_LIBS_AVAILABLE:
+            st.warning("Run `pip install google-auth-oauthlib google-api-python-client` to enable Gmail.")
+        elif "gmail_creds" in st.session_state:
+            # Already authorised
+            st.success("Gmail connected via Google")
+            max_emails = st.slider("Emails to scan", 10, 100, 50, step=10, key="max_emails")
+            col_fetch, col_disc = st.columns(2)
+            with col_fetch:
+                fetch_clicked = st.button("Fetch Statements", key="fetch_btn", use_container_width=True)
+            with col_disc:
+                if st.button("Disconnect", key="disc_btn", use_container_width=True):
+                    del st.session_state["gmail_creds"]
+                    st.rerun()
+            if fetch_clicked:
+                with st.spinner("Scanning Gmail for bank statements…"):
+                    attachments, errs = fetch_gmail_attachments_oauth(
+                        st.session_state["gmail_creds"], max_results=max_emails)
+                for err in errs:
+                    st.error(err)
+                if attachments:
+                    for fname, bio in attachments:
+                        bio.name = fname
+                        dff, err = detect_and_load(bio)
+                        if err:
+                            load_errors.append(f"**{fname}:** {err}")
+                        else:
+                            frames.append(dff)
+                elif not errs:
+                    st.warning("No CSV/XLSX attachments found in matching emails.")
+        else:
+            # Not yet authorised — show Connect button
+            st.info("Your password is **never seen by this app**. "
+                    "Google handles login entirely.", icon="🔒")
+            flow, err = build_oauth_flow()
+            if err:
+                st.caption(err)
+                with st.expander("Setup instructions"):
+                    st.markdown("""
+**One-time setup (free):**
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a project → Enable **Gmail API**
+3. Go to **Credentials** → Create **OAuth 2.0 Client ID** (Web app)
+4. Add `http://localhost:8501` as an authorised redirect URI
+5. Copy **Client ID** and **Client Secret**
+6. Add to `.streamlit/secrets.toml`:
+```toml
+GOOGLE_CLIENT_ID     = "your-client-id"
+GOOGLE_CLIENT_SECRET = "your-client-secret"
+REDIRECT_URI         = "http://localhost:8501"
+```
+                    """)
+            else:
+                auth_url, _ = flow.authorization_url(
+                    access_type="offline",
+                    include_granted_scopes="true",
+                    prompt="consent",
+                )
+                st.session_state["gmail_flow"] = flow
+                st.link_button("Connect Gmail securely", auth_url,
+                               use_container_width=True, type="primary")
+
+    for e in load_errors:
+        st.warning(e)
+    if frames:
+        new_df = pd.concat(frames, ignore_index=True)
+        st.session_state.stmt_df = new_df
+        st.success(f"{len(new_df):,} transactions loaded.")
+
+    st.divider()
+
+    # Step 2
+    st.markdown(f"**{'✅' if summary_ready else '②'}  Add Investment Details** *(optional)*")
+    with st.expander("Paste MF / SIP / RD alerts", expanded=False):
+        st.caption("Copy from SMS or email — one alert per line")
+        mf_text = st.text_area("MF / SIP alerts", height=90, key="mf_notif",
+            placeholder="Your SIP of ₹10,000 towards Axis Bluechip debited on 05-Jan-2025")
+        rd_text = st.text_area("RD alerts", height=70, key="rd_notif",
+            placeholder="Your RD of ₹10,000 debited on 01-Jan-2025")
+
+    st.divider()
+
+    # Step 3
+    st.markdown(f"**{'✅' if summary_ready else '③'}  Generate Your Dashboard**")
+    if data_loaded:
+        if st.button("✨ Generate Monthly Summary", type="primary", key="gen_btn", use_container_width=True):
+            mf_rows = parse_mf_notifications(mf_text) if mf_text.strip() else []
+            rd_rows = parse_mf_notifications(rd_text)  if rd_text.strip() else []
+            computed = compute_monthly_summary(st.session_state.stmt_df, mf_rows, rd_rows)
+            st.session_state.summary_df = computed
+            st.success(f"Done! {len(computed)} months generated.")
+    else:
+        st.button("✨ Generate Monthly Summary", disabled=True, use_container_width=True,
+                  help="Load your statements first (Step 1)")
+
+    st.divider()
+    st.caption("🔒 Your data never leaves your device.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN PAGE
+# ══════════════════════════════════════════════════════════════════════════════
+
+data_loaded   = "stmt_df" in st.session_state
+summary_ready = "summary_df" in st.session_state
+
+# ── Welcome / empty state ─────────────────────────────────────────────────────
+if not summary_ready:
+    st.markdown("""
+    <div class="welcome">
+      <h2>Welcome to Money Clarity OS 👋</h2>
+      <p>Your personal finance dashboard — get a clear picture of where your money goes, automatically.</p>
+      <div class="steps-row">
+        <div class="step-card">
+          <div class="step-num">📁</div>
+          <div class="step-title">Step 1 — Load</div>
+          <div class="step-desc">Upload your bank or credit card statement CSV</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">📲</div>
+          <div class="step-title">Step 2 — Enrich</div>
+          <div class="step-desc">Paste MF/SIP alerts for investment tracking</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">✨</div>
+          <div class="step-title">Step 3 — Generate</div>
+          <div class="step-desc">Your monthly dashboard appears instantly</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.info("👈 Get started from the sidebar — upload a bank statement or connect Gmail to begin.", icon="💡")
+
+    st.markdown("#### Preview — what your dashboard will look like")
+    st.caption("This is sample data. Your real numbers will replace it after Step 3.")
+    df_preview = SAMPLE_DATA.copy()
+    use_df = df_preview
+    is_preview = True
+else:
+    use_df = st.session_state.summary_df.copy()
+    is_preview = False
+
+# ── Parse numeric columns ─────────────────────────────────────────────────────
+num_cols = [c for c in use_df.columns if c != "Month"]
+for c in num_cols:
+    use_df[c] = use_df[c].apply(parse_inr)
+
+if use_df.empty or use_df["Salary"].sum() == 0:
+    st.stop()
+
+# ── Auto-insights ─────────────────────────────────────────────────────────────
+if not is_preview and len(use_df) > 1:
+    insights = []
+    max_spend_row = use_df.loc[use_df["Total Spent"].idxmax()]
+    min_spend_row = use_df.loc[use_df["Total Spent"].idxmin()]
+    max_save_row  = use_df.loc[use_df["Total Savings"].idxmax()]
+    avg_save = use_df["Total Savings"].mean()
+    last_save = use_df["Total Savings"].iloc[-1]
+    insights.append(f"🔴 Highest spend month: <b>{max_spend_row['Month']}</b> at {fmt(max_spend_row['Total Spent'])}")
+    insights.append(f"🟢 Best savings month: <b>{max_save_row['Month']}</b> at {fmt(max_save_row['Total Savings'])}")
+    if last_save > avg_save:
+        insights.append(f"📈 Your latest month savings ({fmt(last_save)}) are above your average ({fmt(avg_save)}) — keep it up!")
+    else:
+        insights.append(f"📉 Your latest month savings ({fmt(last_save)}) are below your average ({fmt(avg_save)}) — room to improve.")
+
+    st.markdown(
+        '<div class="insight-box">💡 <b>Quick Insights</b><br>' +
+        " &nbsp;|&nbsp; ".join(insights) + "</div>",
+        unsafe_allow_html=True
+    )
+
+# ── KPI cards with delta ──────────────────────────────────────────────────────
+st.markdown('<div class="section-header"><h3>Monthly Overview</h3><span class="pill">SUMMARY</span></div>', unsafe_allow_html=True)
+
+last  = use_df.iloc[-1]
+prev  = use_df.iloc[-2] if len(use_df) > 1 else last
+
+c1, c2, c3, c4, c5 = st.columns(5)
+kpi_card(c1, "Salary",        last["Salary"],        savings_delta_html(last["Salary"], prev["Salary"]),       "green")
+kpi_card(c2, "Total Incoming",last["Incoming (Credits)"], savings_delta_html(last["Incoming (Credits)"], prev["Incoming (Credits)"]), "green")
+kpi_card(c3, "Total Outgoing",last["Outgoing (Debits)"],  delta_html(last["Outgoing (Debits)"], prev["Outgoing (Debits)"]),          "red")
+kpi_card(c4, "Total Spent",   last["Total Spent"],   delta_html(last["Total Spent"], prev["Total Spent"]),     "red")
+kpi_card(c5, "Total Savings", last["Total Savings"],  savings_delta_html(last["Total Savings"], prev["Total Savings"]), "green")
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── Editable tracker table ────────────────────────────────────────────────────
+if not is_preview:
+    with st.expander("📋 View & Edit Monthly Tracker", expanded=False):
+        edited = st.data_editor(use_df, width="stretch", num_rows="dynamic", key="summary_editor")
+        st.session_state.summary_df = edited
+        col_dl, _ = st.columns([1, 4])
+        with col_dl:
+            st.download_button("⬇️ Export CSV", edited.to_csv(index=False).encode("utf-8"),
+                               "money_clarity.csv", "text/csv")
+
+# ── Spend Breakdown chart (stacked) ──────────────────────────────────────────
+st.markdown('<div class="section-header"><h3>Monthly Spend Breakdown</h3><span class="pill">WHERE IT GOES</span></div>', unsafe_allow_html=True)
+
+EXP_COLS = {
+    "Fixed (Home+Child+HH)": "Fixed",
+    "Credit Card":            "Credit Card",
+    "Swiggy Credit Card":     "Swiggy CC",
+    "Rupay Credit Card":      "Rupay CC",
+    "GPay / UPI Sent":        "GPay / UPI",
+}
+avail_exp = {k: v for k, v in EXP_COLS.items() if k in use_df.columns}
+if avail_exp:
+    stack_df = use_df[["Month"] + list(avail_exp.keys())].rename(columns=avail_exp)
+    melted   = stack_df.melt(id_vars="Month", var_name="Category", value_name="Amount")
+    melted   = melted[melted["Amount"] > 0]
+    fig_stack = px.bar(melted, x="Month", y="Amount", color="Category",
+                       barmode="stack", color_discrete_sequence=PALETTE,
+                       labels={"Amount":"₹","Month":""})
+    if "Total Spent" in use_df.columns:
+        fig_stack.add_scatter(
+            x=use_df["Month"], y=use_df["Total Spent"],
+            mode="lines+markers+text", name="Total Spent",
+            text=[f"₹{v:,.0f}" for v in use_df["Total Spent"]],
+            textposition="top center",
+            line=dict(color="#111", width=2, dash="dot"),
+            marker=dict(size=7, color="#111"),
+        )
+    fig_stack.update_layout(height=360, margin=dict(t=20,b=10),
+                            legend=dict(orientation="h", y=-0.18),
+                            plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+    st.plotly_chart(fig_stack, width="stretch")
+
+# ── Savings & Net Cash ────────────────────────────────────────────────────────
+st.markdown('<div class="section-header"><h3>Savings & Net Position</h3><span class="pill">FINANCIAL HEALTH</span></div>', unsafe_allow_html=True)
+
+sa, sb = st.columns(2)
+
+with sa:
+    sav_cols = ["Month","MF Principal","MF with Interest","Recurring Deposit (RD)","Stocks / ESPP"]
+    avail_s  = [c for c in sav_cols if c in use_df.columns]
+    if len(avail_s) > 1:
+        melted_s = use_df[avail_s].melt(id_vars="Month", var_name="Type", value_name="Value")
+        melted_s = melted_s[melted_s["Value"] > 0]
+        fig_sav = px.line(melted_s, x="Month", y="Value", color="Type",
+                          markers=True, color_discrete_sequence=PALETTE,
+                          labels={"Value":"₹","Month":""},
+                          title="Savings Growth Over Time")
+        fig_sav.update_layout(height=300, margin=dict(t=40,b=10),
+                               legend=dict(orientation="h", y=-0.2),
+                               plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+        st.plotly_chart(fig_sav, width="stretch")
+
+with sb:
+    if "Net Cash" in use_df.columns:
+        net_df = use_df[["Month","Net Cash"]].copy()
+        net_df["colour"] = net_df["Net Cash"].apply(lambda x: "#16a34a" if x >= 0 else "#dc2626")
+        fig_net = go.Figure(go.Bar(
+            x=net_df["Month"], y=net_df["Net Cash"],
+            marker_color=net_df["colour"],
+            text=[fmt(v) for v in net_df["Net Cash"]],
+            textposition="outside",
+        ))
+        fig_net.add_hline(y=0, line_dash="dot", line_color="#aaa")
+        fig_net.update_layout(height=300, margin=dict(t=40,b=10),
+                               title="Net Cash by Month (green = surplus)",
+                               yaxis_title="₹", xaxis_title="",
+                               plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+        st.plotly_chart(fig_net, width="stretch")
+
+# ── Salary vs Outgoing ────────────────────────────────────────────────────────
+trend_cols = ["Month","Salary","Outgoing (Debits)","Incoming (Credits)"]
+avail_t    = [c for c in trend_cols if c in use_df.columns]
+melted_t   = use_df[avail_t].melt(id_vars="Month", var_name="Type", value_name="Amount")
+fig_trend  = px.bar(melted_t, x="Month", y="Amount", color="Type", barmode="group",
+                    color_discrete_sequence=["#16a34a","#dc2626","#4a72a8"],
+                    labels={"Amount":"₹","Month":""},
+                    title="Salary vs Outgoing vs Incoming")
+fig_trend.update_layout(height=300, margin=dict(t=40,b=10),
+                         legend=dict(orientation="h", y=-0.2),
+                         plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+st.plotly_chart(fig_trend, width="stretch")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SPEND ANALYSIS — from bank statements
+# ══════════════════════════════════════════════════════════════════════════════
+if data_loaded:
+    st.markdown('<div class="section-header"><h3>Spend Analysis</h3><span class="pill">FROM YOUR STATEMENTS</span></div>', unsafe_allow_html=True)
+
+    df_raw = st.session_state.stmt_df.copy()
+
+    fa, fb, fc = st.columns(3)
+    with fa:
+        months = sorted(df_raw["Month"].unique())
+        sel_m  = st.multiselect("Filter by Month", months, default=months, key="f_month")
+    with fb:
+        cats   = sorted(df_raw["Category"].unique())
+        sel_c  = st.multiselect("Filter by Category", cats, default=cats, key="f_cat")
+    with fc:
+        sel_t  = st.multiselect("Filter by Type", ["Income","Expense"],
+                                default=["Income","Expense"], key="f_type")
+
+    df = df_raw[
+        df_raw["Month"].isin(sel_m) &
+        df_raw["Category"].isin(sel_c) &
+        df_raw["Type"].isin(sel_t)
+    ]
+
+    if df.empty:
+        st.info("No transactions match your filters.")
+    else:
+        total_in  = df[df["Type"]=="Income"]["Credit"].sum()
+        total_out = df[df["Type"]=="Expense"]["Debit"].sum()
+        net       = total_in - total_out
+
+        k1, k2, k3, k4 = st.columns(4)
+        kpi_card(k1, "Total Income",     total_in,  "", "green")
+        kpi_card(k2, "Total Expenses",   total_out, "", "red")
+        kpi_card(k3, "Net",              net,       "", "green" if net >= 0 else "red")
+        with k4:
+            st.markdown(f'<div class="kpi"><div class="kpi-label">Transactions</div>'
+                        f'<div class="kpi-val">{len(df):,}</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        expenses = df[df["Type"]=="Expense"].copy()
+
+        r1a, r1b = st.columns(2)
+        with r1a:
+            ec = expenses.groupby("Category")["Debit"].sum().reset_index().sort_values("Debit", ascending=False)
+            if not ec.empty:
+                ec["pct"] = (ec["Debit"]/ec["Debit"].sum()*100).round(1)
+                fig_tree = px.treemap(ec, path=["Category"], values="Debit",
+                                      color="Debit",
+                                      color_continuous_scale=["#f0f4fa","#8aaed6","#4a72a8"],
+                                      custom_data=["pct"],
+                                      title="Where did my money go?")
+                fig_tree.update_traces(
+                    texttemplate="<b>%{label}</b><br>₹%{value:,.0f}<br>%{customdata[0]}%",
+                    textfont_size=12)
+                fig_tree.update_layout(height=340, margin=dict(t=40,b=5), coloraxis_showscale=False)
+                st.plotly_chart(fig_tree, width="stretch")
+
+        with r1b:
+            mo_exp = expenses.groupby("Month")["Debit"].sum().reset_index()
+            mo_exp["colour"] = ["#dc2626" if v==mo_exp["Debit"].max() else "#4a72a8" for v in mo_exp["Debit"]]
+            fig_mo = go.Figure(go.Bar(
+                x=mo_exp["Month"], y=mo_exp["Debit"],
+                marker_color=mo_exp["colour"],
+                text=[fmt(v) for v in mo_exp["Debit"]],
+                textposition="outside",
+            ))
+            fig_mo.update_layout(height=340, margin=dict(t=40,b=5),
+                                  title="Spend by Month  🔴 = highest",
+                                  yaxis_title="₹", xaxis_title="",
+                                  plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+            st.plotly_chart(fig_mo, width="stretch")
+
+        r2a, r2b = st.columns(2)
+        with r2a:
+            merchants = (expenses.groupby("Description")["Debit"].sum()
+                         .sort_values(ascending=False).head(10).reset_index())
+            merchants["Description"] = merchants["Description"].str[:35]
+            fig_m = px.bar(merchants, x="Debit", y="Description", orientation="h",
+                           color="Debit", color_continuous_scale=["#c8d8ee","#4a72a8"],
+                           text=[fmt(v) for v in merchants["Debit"]],
+                           labels={"Debit":"₹","Description":""},
+                           title="Top 10 Merchants")
+            fig_m.update_traces(textposition="outside")
+            fig_m.update_layout(height=340, margin=dict(t=40,b=5),
+                                 yaxis=dict(autorange="reversed"),
+                                 coloraxis_showscale=False,
+                                 plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+            st.plotly_chart(fig_m, width="stretch")
+
+        with r2b:
+            exp_dow = expenses.copy()
+            exp_dow["DayOfWeek"] = exp_dow["Date"].dt.day_name()
+            dow_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+            dow = exp_dow.groupby("DayOfWeek")["Debit"].sum().reindex(dow_order).fillna(0).reset_index()
+            dow["colour"] = ["#dc2626" if v==dow["Debit"].max() else "#4a72a8" for v in dow["Debit"]]
+            fig_dow = go.Figure(go.Bar(
+                x=dow["DayOfWeek"], y=dow["Debit"],
+                marker_color=dow["colour"],
+                text=[fmt(v) for v in dow["Debit"]],
+                textposition="outside",
+            ))
+            fig_dow.update_layout(height=340, margin=dict(t=40,b=5),
+                                   title="When do I spend most?  🔴 = peak day",
+                                   yaxis_title="₹", xaxis_title="",
+                                   plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+            st.plotly_chart(fig_dow, width="stretch")
+
+        # Heatmap
+        st.markdown("**Spend Heatmap — Category × Month**")
+        st.caption("Darker = higher spend. Spot patterns at a glance.")
+        pivot = expenses.groupby(["Category","Month"])["Debit"].sum().unstack(fill_value=0)
+        if not pivot.empty:
+            fig_heat = px.imshow(pivot,
+                                  color_continuous_scale=["#f9fafb","#94a3b8","#111827"],
+                                  aspect="auto", text_auto=".0f",
+                                  labels=dict(x="Month", y="Category", color="₹"))
+            fig_heat.update_traces(textfont_size=11)
+            fig_heat.update_layout(height=max(280, len(pivot)*36), margin=dict(t=10,b=10))
+            st.plotly_chart(fig_heat, width="stretch")
+
+        r4a, r4b = st.columns(2)
+        with r4a:
+            daily = expenses.groupby("Date")["Debit"].sum().reset_index()
+            fig_daily = px.area(daily, x="Date", y="Debit",
+                                color_discrete_sequence=["#dc2626"],
+                                labels={"Debit":"₹","Date":""},
+                                title="Daily Spending Pattern")
+            fig_daily.update_layout(height=260, margin=dict(t=40,b=5),
+                                     plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+            st.plotly_chart(fig_daily, width="stretch")
+
+        with r4b:
+            mo_both = df.groupby(["Month","Type"]).agg(D=("Debit","sum"),C=("Credit","sum")).reset_index()
+            mo_both["Val"] = mo_both.apply(lambda r: r["C"] if r["Type"]=="Income" else r["D"], axis=1)
+            fig_mo2 = px.bar(mo_both, x="Month", y="Val", color="Type", barmode="group",
+                             color_discrete_map={"Income":"#16a34a","Expense":"#dc2626"},
+                             labels={"Val":"₹","Month":""},
+                             title="Income vs Expense by Month")
+            fig_mo2.update_layout(height=260, margin=dict(t=40,b=5),
+                                   legend=dict(orientation="h",y=-0.25),
+                                   plot_bgcolor="#ffffff", paper_bgcolor="#ffffff")
+            st.plotly_chart(fig_mo2, width="stretch")
+
+        # Transactions
+        st.markdown('<div class="section-header"><h3>Transactions</h3><span class="pill">DRILL DOWN</span></div>', unsafe_allow_html=True)
+        search = st.text_input("🔍 Search transactions",
+                               placeholder="Type merchant, category or amount…", key="txn_search")
+        disp = df[["Date","Description","Type","Category","Debit","Credit","Source"]].copy()
+        disp["Date"] = disp["Date"].dt.strftime("%d %b %Y")
+        if search:
+            disp = disp[disp["Description"].str.contains(search, case=False, na=False)]
+        st.dataframe(disp, width="stretch", height=360,
+                     column_config={
+                         "Debit":  st.column_config.NumberColumn("Debit ₹",  format="₹%.0f"),
+                         "Credit": st.column_config.NumberColumn("Credit ₹", format="₹%.0f"),
+                     })
+        st.download_button("⬇️ Export transactions as CSV",
+                           disp.to_csv(index=False).encode("utf-8"),
+                           "money_clarity_transactions.csv", "text/csv")
