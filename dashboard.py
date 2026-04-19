@@ -583,8 +583,12 @@ REDIRECT_URI         = "http://localhost:8501"
                     prompt="consent",
                 )
                 st.session_state["gmail_flow"] = flow
-                st.link_button("Connect Gmail securely", auth_url,
-                               use_container_width=True, type="primary")
+                st.markdown(f'''<a href="{auth_url}" target="_self" style="
+                    display:block;text-align:center;padding:0.5rem 1rem;
+                    background:#4a72a8;color:white;border-radius:0.5rem;
+                    text-decoration:none;font-weight:600;font-size:0.875rem;
+                    width:100%;box-sizing:border-box;margin-top:0.25rem;">
+                    🔒 Connect Gmail securely</a>''', unsafe_allow_html=True)
 
     for e in load_errors:
         st.warning(e)
@@ -659,13 +663,26 @@ if not summary_ready:
     st.info("👈 Get started from the sidebar — upload a bank statement or connect Gmail to begin.", icon="💡")
 
     st.markdown("#### Preview — what your dashboard will look like")
-    st.caption("This is sample data. Your real numbers will replace it after Step 3.")
     df_preview = SAMPLE_DATA.copy()
     use_df = df_preview
     is_preview = True
 else:
     use_df = st.session_state.summary_df.copy()
     is_preview = False
+
+# ── Mockup banner ─────────────────────────────────────────────────────────────
+if is_preview:
+    st.markdown("""
+    <div style="background:#eff6ff;border:1.5px solid #93c5fd;border-radius:0.6rem;
+                padding:0.65rem 1rem;margin-bottom:1rem;display:flex;
+                align-items:center;gap:0.6rem;">
+      <span style="font-size:1.1rem;">🔵</span>
+      <span style="color:#1d4ed8;font-size:0.85rem;">
+        <b>This is sample/mockup data.</b> Your real numbers will appear here once you
+        upload your bank statements from the sidebar.
+      </span>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ── Parse numeric columns ─────────────────────────────────────────────────────
 num_cols = [c for c in use_df.columns if c != "Month"]
