@@ -19,8 +19,7 @@ try:
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
 
-st.set_page_config(page_title="Money Clarity OS", page_icon="💰", layout="wide",
-                   initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Money Clarity OS", page_icon="💰", layout="wide")
 
 # ── Core palette ──────────────────────────────────────────────────────────────
 C_GREEN  = "#16a34a"   # positive — savings, surplus, growth
@@ -43,9 +42,6 @@ st.markdown(f"""
   html, body, [class*="css"] {{ font-family: 'Inter', system-ui, sans-serif; }}
   .block-container {{ padding-top: 1.5rem; padding-bottom: 3rem; background: #ffffff;
                       padding-left: 1rem !important; padding-right: 1rem !important; }}
-  section[data-testid="stSidebar"] {{ background: {C_GREY_BG}; border-right: 1px solid #e5e7eb; }}
-  section[data-testid="stSidebar"] > div {{ padding-top: 1.5rem; }}
-
   /* KPI cards */
   .kpi {{
     background: #fff;
@@ -490,146 +486,139 @@ if "code" in _params and "gmail_flow" in st.session_state and GOOGLE_LIBS_AVAILA
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
+# HEADER
 # ══════════════════════════════════════════════════════════════════════════════
-with st.sidebar:
-    st.markdown("## 💰 Money Clarity OS")
-    st.caption("Personal Finance Dashboard")
-    st.divider()
+st.markdown(f"""
+<div style="display:flex;align-items:center;justify-content:space-between;
+            padding:0.5rem 0 1rem;border-bottom:2px solid #e5e7eb;margin-bottom:1.25rem;">
+  <div>
+    <span style="font-size:1.5rem;font-weight:700;color:#111;">💰 Money Clarity OS</span>
+    <span style="font-size:0.82rem;color:{C_GREY};margin-left:0.75rem;">Personal Finance Dashboard</span>
+  </div>
+  <span style="font-size:0.75rem;color:{C_GREY};">🔒 Your data never leaves your device</span>
+</div>
+""", unsafe_allow_html=True)
 
-    data_loaded = "stmt_df" in st.session_state
-    summary_ready = "summary_df" in st.session_state
+# ══════════════════════════════════════════════════════════════════════════════
+# DATA LOADING — 3 steps inline
+# ══════════════════════════════════════════════════════════════════════════════
+data_loaded   = "stmt_df" in st.session_state
+summary_ready = "summary_df" in st.session_state
 
-    # Step 1
-    done1 = "✅" if data_loaded else "1"
-    st.markdown(f"**{'✅' if data_loaded else '①'}  Load Your Statements**")
-    source_mode = st.radio("", ["📁 Upload Files", "📧 Connect Gmail"],
-                           key="source_mode", label_visibility="collapsed")
+# Keep mf/rd text accessible even when expander is collapsed
+mf_text = st.session_state.get("mf_notif", "")
+rd_text = st.session_state.get("rd_notif", "")
 
-    frames, load_errors = [], []
+_exp_label = "✅ Data loaded — expand to reload or update" if data_loaded else "📂 Get started — load your statements below"
+with st.expander(_exp_label, expanded=not data_loaded):
+    s1, s2, s3 = st.columns([2, 1.5, 1.2])
 
-    if source_mode == "📁 Upload Files":
-        uploads = st.file_uploader(
-            "Bank / CC statements (CSV or XLSX)",
-            type=["csv","xlsx","xls"],
-            accept_multiple_files=True, key="stmt_upload",
-            help="Export your bank statement as CSV from your bank's net banking portal"
-        )
-        if uploads:
-            for f in uploads:
-                dff, err = detect_and_load(f)
-                if err:
-                    load_errors.append(f"**{f.name}:** {err}")
-                else:
-                    frames.append(dff)
+    # ── Step 1: Load ─────────────────────────────────────────────────────────
+    with s1:
+        st.markdown(f"**{'✅' if data_loaded else '①'}  Load Your Statements**")
+        source_mode = st.radio("", ["📁 Upload Files", "📧 Connect Gmail"],
+                               key="source_mode", label_visibility="collapsed",
+                               horizontal=True)
+        frames, load_errors = [], []
 
-    else:
-        # ── Google OAuth flow ────────────────────────────────────────
-        if not GOOGLE_LIBS_AVAILABLE:
-            st.warning("Run `pip install google-auth-oauthlib google-api-python-client` to enable Gmail.")
-        elif "gmail_creds" in st.session_state:
-            # Already authorised
-            st.success("Gmail connected via Google")
-            max_emails = st.slider("Emails to scan", 10, 100, 50, step=10, key="max_emails")
-            col_fetch, col_disc = st.columns(2)
-            with col_fetch:
-                fetch_clicked = st.button("Fetch Statements", key="fetch_btn", use_container_width=True)
-            with col_disc:
-                if st.button("Disconnect", key="disc_btn", use_container_width=True):
-                    del st.session_state["gmail_creds"]
-                    st.rerun()
-            if fetch_clicked:
-                with st.spinner("Scanning Gmail for bank statements…"):
-                    attachments, errs = fetch_gmail_attachments_oauth(
-                        st.session_state["gmail_creds"], max_results=max_emails)
-                for err in errs:
-                    st.error(err)
-                if attachments:
-                    for fname, bio in attachments:
-                        bio.name = fname
-                        dff, err = detect_and_load(bio)
-                        if err:
-                            load_errors.append(f"**{fname}:** {err}")
-                        else:
-                            frames.append(dff)
-                elif not errs:
-                    st.warning("No CSV/XLSX attachments found in matching emails.")
+        if source_mode == "📁 Upload Files":
+            uploads = st.file_uploader(
+                "Bank / CC statements (CSV or XLSX)",
+                type=["csv","xlsx","xls"],
+                accept_multiple_files=True, key="stmt_upload",
+                help="Export your bank statement as CSV from your bank's net banking portal"
+            )
+            if uploads:
+                for f in uploads:
+                    dff, err = detect_and_load(f)
+                    if err:
+                        load_errors.append(f"**{f.name}:** {err}")
+                    else:
+                        frames.append(dff)
         else:
-            # Not yet authorised — show Connect button
-            st.info("Your password is **never seen by this app**. "
-                    "Google handles login entirely.", icon="🔒")
-            flow, err = build_oauth_flow()
-            if err:
-                st.caption(err)
-                with st.expander("Setup instructions"):
-                    st.markdown("""
-**One-time setup (free):**
-1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Create a project → Enable **Gmail API**
-3. Go to **Credentials** → Create **OAuth 2.0 Client ID** (Web app)
-4. Add `http://localhost:8501` as an authorised redirect URI
-5. Copy **Client ID** and **Client Secret**
-6. Add to `.streamlit/secrets.toml`:
-```toml
-GOOGLE_CLIENT_ID     = "your-client-id"
-GOOGLE_CLIENT_SECRET = "your-client-secret"
-REDIRECT_URI         = "http://localhost:8501"
-```
-                    """)
+            if not GOOGLE_LIBS_AVAILABLE:
+                st.warning("Run `pip install google-auth-oauthlib google-api-python-client` to enable Gmail.")
+            elif "gmail_creds" in st.session_state:
+                st.success("Gmail connected via Google")
+                max_emails = st.slider("Emails to scan", 10, 100, 50, step=10, key="max_emails")
+                col_fetch, col_disc = st.columns(2)
+                with col_fetch:
+                    fetch_clicked = st.button("Fetch Statements", key="fetch_btn", use_container_width=True)
+                with col_disc:
+                    if st.button("Disconnect", key="disc_btn", use_container_width=True):
+                        del st.session_state["gmail_creds"]
+                        st.rerun()
+                if fetch_clicked:
+                    with st.spinner("Scanning Gmail for bank statements…"):
+                        attachments, errs = fetch_gmail_attachments_oauth(
+                            st.session_state["gmail_creds"], max_results=max_emails)
+                    for err in errs:
+                        st.error(err)
+                    if attachments:
+                        for fname, bio in attachments:
+                            bio.name = fname
+                            dff, err = detect_and_load(bio)
+                            if err:
+                                load_errors.append(f"**{fname}:** {err}")
+                            else:
+                                frames.append(dff)
+                    elif not errs:
+                        st.warning("No CSV/XLSX attachments found in matching emails.")
             else:
-                auth_url, _ = flow.authorization_url(
-                    access_type="offline",
-                    include_granted_scopes="true",
-                    prompt="consent",
-                )
-                st.session_state["gmail_flow"] = flow
-                st.markdown(f'''<a href="{auth_url}" target="_self" style="
-                    display:block;text-align:center;padding:0.5rem 1rem;
-                    background:#4a72a8;color:white;border-radius:0.5rem;
-                    text-decoration:none;font-weight:600;font-size:0.875rem;
-                    width:100%;box-sizing:border-box;margin-top:0.25rem;">
-                    🔒 Connect Gmail securely</a>''', unsafe_allow_html=True)
+                st.info("Your password is **never seen by this app**. "
+                        "Google handles login entirely.", icon="🔒")
+                flow, err = build_oauth_flow()
+                if err:
+                    st.caption(err)
+                else:
+                    auth_url, _ = flow.authorization_url(
+                        access_type="offline",
+                        include_granted_scopes="true",
+                        prompt="consent",
+                    )
+                    st.session_state["gmail_flow"] = flow
+                    st.markdown(f'''<a href="{auth_url}" target="_self" style="
+                        display:block;text-align:center;padding:0.5rem 1rem;
+                        background:#4a72a8;color:white;border-radius:0.5rem;
+                        text-decoration:none;font-weight:600;font-size:0.875rem;
+                        width:100%;box-sizing:border-box;margin-top:0.25rem;">
+                        🔒 Connect Gmail securely</a>''', unsafe_allow_html=True)
 
-    for e in load_errors:
-        st.warning(e)
-    if frames:
-        new_df = pd.concat(frames, ignore_index=True)
-        st.session_state.stmt_df = new_df
-        st.success(f"{len(new_df):,} transactions loaded.")
+        for e in load_errors:
+            st.warning(e)
+        if frames:
+            new_df = pd.concat(frames, ignore_index=True)
+            st.session_state.stmt_df = new_df
+            st.success(f"{len(new_df):,} transactions loaded.")
 
-    st.divider()
-
-    # Step 2
-    st.markdown(f"**{'✅' if summary_ready else '②'}  Add Investment Details** *(optional)*")
-    with st.expander("Paste MF / SIP / RD alerts", expanded=False):
-        st.caption("Copy from SMS or email — one alert per line")
-        mf_text = st.text_area("MF / SIP alerts", height=90, key="mf_notif",
+    # ── Step 2: Enrich ───────────────────────────────────────────────────────
+    with s2:
+        st.markdown(f"**{'✅' if summary_ready else '②'}  Investment Details** *(optional)*")
+        st.caption("Copy from SMS/email — one alert per line")
+        mf_text = st.text_area("MF / SIP alerts", height=85, key="mf_notif",
             placeholder="Your SIP of ₹10,000 towards Axis Bluechip debited on 05-Jan-2025")
-        rd_text = st.text_area("RD alerts", height=70, key="rd_notif",
+        rd_text = st.text_area("RD alerts", height=65, key="rd_notif",
             placeholder="Your RD of ₹10,000 debited on 01-Jan-2025")
 
-    st.divider()
-
-    # Step 3
-    st.markdown(f"**{'✅' if summary_ready else '③'}  Generate Your Dashboard**")
-    if data_loaded:
-        if st.button("✨ Generate Monthly Summary", type="primary", key="gen_btn", use_container_width=True):
-            mf_rows = parse_mf_notifications(mf_text) if mf_text.strip() else []
-            rd_rows = parse_mf_notifications(rd_text)  if rd_text.strip() else []
-            computed = compute_monthly_summary(st.session_state.stmt_df, mf_rows, rd_rows)
-            st.session_state.summary_df = computed
-            st.success(f"Done! {len(computed)} months generated.")
-    else:
-        st.button("✨ Generate Monthly Summary", disabled=True, use_container_width=True,
-                  help="Load your statements first (Step 1)")
-
-    st.divider()
-    st.caption("🔒 Your data never leaves your device.")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MAIN PAGE
-# ══════════════════════════════════════════════════════════════════════════════
+    # ── Step 3: Generate ─────────────────────────────────────────────────────
+    with s3:
+        st.markdown(f"**{'✅' if summary_ready else '③'}  Generate Dashboard**")
+        st.write("")
+        _data_now = "stmt_df" in st.session_state
+        if _data_now:
+            if st.button("✨ Generate Monthly Summary", type="primary",
+                         key="gen_btn", use_container_width=True):
+                _mf = parse_mf_notifications(mf_text) if mf_text.strip() else []
+                _rd = parse_mf_notifications(rd_text)  if rd_text.strip() else []
+                computed = compute_monthly_summary(st.session_state.stmt_df, _mf, _rd)
+                st.session_state.summary_df = computed
+                st.success(f"Done! {len(computed)} months generated.")
+                st.rerun()
+        else:
+            st.button("✨ Generate Monthly Summary", disabled=True,
+                      use_container_width=True,
+                      help="Load your statements first (Step 1)")
+        st.caption("🔒 Data stays on your device")
 
 data_loaded   = "stmt_df" in st.session_state
 summary_ready = "summary_df" in st.session_state
@@ -660,7 +649,7 @@ if not summary_ready:
     </div>
     """, unsafe_allow_html=True)
 
-    st.info("👈 Get started from the sidebar — upload a bank statement or connect Gmail to begin.", icon="💡")
+    st.info("Upload a bank statement or connect Gmail above to see your real numbers here.", icon="💡")
 
     st.markdown("#### Preview — what your dashboard will look like")
     df_preview = SAMPLE_DATA.copy()
