@@ -708,7 +708,7 @@ summary_ready = "summary_df" in st.session_state
 # ── Welcome / empty state ─────────────────────────────────────────────────────
 if not summary_ready:
 
-    st.info("Upload a bank statement or connect Gmail above to see your real numbers here.", icon="💡")
+
 
     st.markdown("#### Preview — what your dashboard will look like")
     df_preview = SAMPLE_DATA.copy()
