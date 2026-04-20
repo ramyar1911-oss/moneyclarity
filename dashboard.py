@@ -509,13 +509,19 @@ summary_ready = "summary_df" in st.session_state
 mf_text = st.session_state.get("mf_notif", "")
 rd_text = st.session_state.get("rd_notif", "")
 
+# Fix 3 — guiding banner
+if not data_loaded:
+    st.info("Start with Step 1 — upload a statement or connect Gmail. You can add investments later.", icon="👆")
+
 _exp_label = "✅ Data loaded — expand to reload or update" if data_loaded else "📂 Get started — load your statements below"
 with st.expander(_exp_label, expanded=not data_loaded):
     s1, s2, s3 = st.columns([2, 1.5, 1.2])
 
-    # ── Step 1: Load ─────────────────────────────────────────────────────────
+    # ── Step 1: Load — PRIMARY ───────────────────────────────────────────────
     with s1:
-        st.markdown(f"**{'✅' if data_loaded else '①'}  Load Your Statements**")
+        st.markdown(f'<p style="font-size:1rem;font-weight:700;color:#111;margin-bottom:0.4rem;">'
+                    f'{"✅" if data_loaded else "①"}&nbsp; Load Your Statements</p>',
+                    unsafe_allow_html=True)
         source_mode = st.radio("", ["📁 Upload Files", "📧 Connect Gmail"],
                                key="source_mode", label_visibility="collapsed",
                                horizontal=True)
@@ -591,18 +597,36 @@ with st.expander(_exp_label, expanded=not data_loaded):
             st.session_state.stmt_df = new_df
             st.success(f"{len(new_df):,} transactions loaded.")
 
-    # ── Step 2: Enrich ───────────────────────────────────────────────────────
+        # Fix 4 — privacy helper lives inside Step 1
+        with st.expander("🔒 Concerned about sharing personal data?"):
+            st.markdown("""Use ChatGPT or Claude to anonymize your statement before uploading.
+
+**Steps:** Copy statement → paste with the prompt below → upload cleaned CSV here.""")
+            st.code("""Convert this bank statement into a CSV with columns:
+Date, Description, Debit, Credit.
+
+Remove or anonymize:
+- Names, Account numbers, PAN details, Employer info
+
+Keep only transaction-level data.""")
+
+    # ── Step 2: Enrich — SECONDARY ───────────────────────────────────────────
     with s2:
-        st.markdown(f"**{'✅' if summary_ready else '②'}  Investment Details** *(optional)*")
-        st.caption("Copy from SMS/email — one alert per line")
+        st.markdown(f'<p style="font-size:0.82rem;font-weight:500;color:{C_GREY};margin-bottom:0.2rem;">'
+                    f'{"✅" if summary_ready else "②"}&nbsp; Investment Details'
+                    f'&nbsp;<em style="font-weight:400;">— optional, add later</em></p>',
+                    unsafe_allow_html=True)
+        st.caption("Paste MF / SIP / RD SMS alerts — one per line")
         mf_text = st.text_area("MF / SIP alerts", height=85, key="mf_notif",
             placeholder="Your SIP of ₹10,000 towards Axis Bluechip debited on 05-Jan-2025")
         rd_text = st.text_area("RD alerts", height=65, key="rd_notif",
             placeholder="Your RD of ₹10,000 debited on 01-Jan-2025")
 
-    # ── Step 3: Generate ─────────────────────────────────────────────────────
+    # ── Step 3: Generate — ACTION ────────────────────────────────────────────
     with s3:
-        st.markdown(f"**{'✅' if summary_ready else '③'}  Generate Dashboard**")
+        st.markdown(f'<p style="font-size:0.95rem;font-weight:600;color:{C_BLUE};margin-bottom:0.4rem;">'
+                    f'{"✅" if summary_ready else "③"}&nbsp; Generate Dashboard</p>',
+                    unsafe_allow_html=True)
         st.write("")
         _data_now = "stmt_df" in st.session_state
         if _data_now:
@@ -622,28 +646,6 @@ with st.expander(_exp_label, expanded=not data_loaded):
 
 data_loaded   = "stmt_df" in st.session_state
 summary_ready = "summary_df" in st.session_state
-
-# ── Privacy helper ────────────────────────────────────────────────────────────
-st.markdown("### 🔒 Concerned about sharing personal data?")
-with st.expander("Anonymize your data before uploading"):
-    st.markdown("""
-You can use ChatGPT or Claude to remove sensitive information before uploading your statement.
-
-**How to do it:**
-1. Copy your bank statement text
-2. Paste into ChatGPT or Claude with the prompt below
-3. Upload the cleaned CSV here
-""")
-    st.code("""Convert this bank statement into a CSV with columns:
-Date, Description, Debit, Credit.
-
-Remove or anonymize:
-- Names
-- Account numbers
-- PAN details
-- Employer info
-
-Keep only transaction-level data.""")
 
 # ── Welcome / empty state ─────────────────────────────────────────────────────
 if not summary_ready:
