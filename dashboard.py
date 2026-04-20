@@ -19,6 +19,13 @@ try:
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
 
+# Anthropic
+try:
+    import anthropic as _anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
 st.set_page_config(page_title="Money Clarity OS", page_icon="💰", layout="wide")
 
 # ── Core palette ──────────────────────────────────────────────────────────────
@@ -395,6 +402,36 @@ def detect_and_load(f):
     df["Month"] = df["Date"].dt.to_period("M").astype(str)
     return df.sort_values("Date").reset_index(drop=True), ""
 
+# ── AI anonymizer ────────────────────────────────────────────────────────────
+AI_PROMPT = """You are a financial data parser. Convert the pasted bank statement into clean CSV.
+
+Output STRICTLY in CSV format with headers:
+Date,Description,Debit,Credit
+
+Rules:
+- No extra text, no markdown, no code fences
+- Dates in DD-MM-YYYY format
+- Debit = money out (positive number), Credit = money in (positive number)
+- Remove or replace: names, account numbers, PAN details, employer names
+- Keep only transaction rows"""
+
+def anonymize_statement(raw_text):
+    api_key = st.secrets.get("CLAUDE_API_KEY", "")
+    if not api_key:
+        return None, "Anthropic API key not configured. Add `CLAUDE_API_KEY` to Streamlit secrets."
+    try:
+        client = _anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            system=AI_PROMPT,
+            messages=[{"role": "user", "content": raw_text[:12000]}],
+        )
+        return msg.content[0].text.strip(), None
+    except Exception as e:
+        return None, str(e)
+
+
 # ── Google OAuth helpers ──────────────────────────────────────────────────────
 GMAIL_SCOPES   = ["https://www.googleapis.com/auth/gmail.readonly"]
 GMAIL_QUERY    = ("has:attachment ("
@@ -522,7 +559,7 @@ with st.expander(_exp_label, expanded=not data_loaded):
         st.markdown(f'<p style="font-size:1rem;font-weight:700;color:#111;margin-bottom:0.4rem;">'
                     f'{"✅" if data_loaded else "①"}&nbsp; Load Your Statements</p>',
                     unsafe_allow_html=True)
-        source_mode = st.radio("", ["📁 Upload Files", "📧 Connect Gmail"],
+        source_mode = st.radio("", ["📁 Upload Files", "📧 Connect Gmail", "📋 Paste & AI-clean"],
                                key="source_mode", label_visibility="collapsed",
                                horizontal=True)
         frames, load_errors = [], []
@@ -589,6 +626,47 @@ with st.expander(_exp_label, expanded=not data_loaded):
                         text-decoration:none;font-weight:600;font-size:0.875rem;
                         width:100%;box-sizing:border-box;margin-top:0.25rem;">
                         🔒 Connect Gmail securely</a>''', unsafe_allow_html=True)
+
+        if source_mode == "📋 Paste & AI-clean":
+            if not ANTHROPIC_AVAILABLE:
+                st.warning("Run `pip install anthropic` to enable this feature.")
+            else:
+                raw_text = st.text_area(
+                    "Paste your bank statement here",
+                    height=180, key="ai_paste_input",
+                    placeholder="Paste any format — PDF copy, SMS history, net banking table…"
+                )
+                if st.button("✨ Clean & Load", key="ai_clean_btn", use_container_width=True,
+                             type="primary"):
+                    if raw_text.strip():
+                        with st.spinner("🔍 Cleaning and structuring your data…"):
+                            result, err = anonymize_statement(raw_text)
+                        if err:
+                            st.error(f"Error: {err}")
+                        else:
+                            try:
+                                from io import StringIO as _StringIO
+                                df_clean = pd.read_csv(_StringIO(result))
+                                df_clean.columns = df_clean.columns.str.strip()
+                                df_clean["Date"]        = pd.to_datetime(df_clean["Date"], errors="coerce", dayfirst=True)
+                                df_clean["Description"] = df_clean["Description"].astype(str).str.strip()
+                                df_clean["Debit"]       = df_clean["Debit"].apply(parse_inr)
+                                df_clean["Credit"]      = df_clean["Credit"].apply(parse_inr)
+                                df_clean["Amount"]      = df_clean["Credit"] - df_clean["Debit"]
+                                df_clean["Type"]        = df_clean["Amount"].apply(lambda x: "Income" if x >= 0 else "Expense")
+                                df_clean["Category"]    = df_clean["Description"].apply(categorize)
+                                df_clean["Source"]      = "AI paste"
+                                df_clean               = df_clean.dropna(subset=["Date"])
+                                df_clean["Date"]        = df_clean["Date"].dt.normalize()
+                                df_clean["Month"]       = df_clean["Date"].dt.to_period("M").astype(str)
+                                df_clean               = df_clean.sort_values("Date").reset_index(drop=True)
+                                st.session_state.stmt_df = df_clean
+                                st.success(f"✅ {len(df_clean):,} transactions loaded into dashboard automatically!")
+                                st.rerun()
+                            except Exception as _ex:
+                                st.error(f"Couldn't parse the data. Try a smaller or cleaner input. ({_ex})")
+                    else:
+                        st.warning("Please paste some statement text first.")
 
         for e in load_errors:
             st.warning(e)
