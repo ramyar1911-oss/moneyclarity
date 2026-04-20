@@ -559,26 +559,39 @@ with st.expander(_exp_label, expanded=not data_loaded):
         st.markdown(f'<p style="font-size:1rem;font-weight:700;color:#111;margin-bottom:0.4rem;">'
                     f'{"✅" if data_loaded else "①"}&nbsp; Load Your Statements</p>',
                     unsafe_allow_html=True)
-        source_mode = st.radio("", ["📁 Upload Files", "📧 Connect Gmail", "📋 Paste & AI-clean"],
-                               key="source_mode", label_visibility="collapsed",
-                               horizontal=True)
+
         frames, load_errors = [], []
 
-        if source_mode == "📁 Upload Files":
-            uploads = st.file_uploader(
-                "Bank / CC statements (CSV or XLSX)",
-                type=["csv","xlsx","xls"],
-                accept_multiple_files=True, key="stmt_upload",
-                help="Export your bank statement as CSV from your bank's net banking portal"
-            )
-            if uploads:
-                for f in uploads:
-                    dff, err = detect_and_load(f)
-                    if err:
-                        load_errors.append(f"**{f.name}:** {err}")
-                    else:
-                        frames.append(dff)
-        else:
+        # 🟢 Option A — direct upload (primary)
+        uploads = st.file_uploader(
+            "Upload your bank statement (CSV or XLSX)",
+            type=["csv","xlsx","xls"],
+            accept_multiple_files=True, key="stmt_upload",
+            help="Export your statement as CSV from your bank's net banking portal"
+        )
+        if uploads:
+            for f in uploads:
+                dff, err = detect_and_load(f)
+                if err:
+                    load_errors.append(f"**{f.name}:** {err}")
+                else:
+                    frames.append(dff)
+
+        # 🟡 Option B — inline privacy helper
+        st.markdown(f'<p style="font-size:0.78rem;color:{C_GREY};margin-top:0.4rem;">'
+                    f'👉 You can upload directly, or anonymize your data using ChatGPT / Claude before uploading.</p>',
+                    unsafe_allow_html=True)
+        with st.expander("Show anonymization prompt"):
+            st.code("""Convert this bank statement into a CSV with columns:
+Date, Description, Debit, Credit.
+
+Remove or anonymize:
+- Names, Account numbers, PAN details, Employer info
+
+Keep only transaction-level data. Output CSV only, no extra text.""")
+
+        # 📧 Gmail — secondary option
+        with st.expander("📧 Or fetch statements from Gmail instead"):
             if not GOOGLE_LIBS_AVAILABLE:
                 st.warning("Run `pip install google-auth-oauthlib google-api-python-client` to enable Gmail.")
             elif "gmail_creds" in st.session_state:
@@ -608,8 +621,7 @@ with st.expander(_exp_label, expanded=not data_loaded):
                     elif not errs:
                         st.warning("No CSV/XLSX attachments found in matching emails.")
             else:
-                st.info("Your password is **never seen by this app**. "
-                        "Google handles login entirely.", icon="🔒")
+                st.info("Your password is **never seen by this app**. Google handles login entirely.", icon="🔒")
                 flow, err = build_oauth_flow()
                 if err:
                     st.caption(err)
@@ -624,49 +636,8 @@ with st.expander(_exp_label, expanded=not data_loaded):
                         display:block;text-align:center;padding:0.5rem 1rem;
                         background:#4a72a8;color:white;border-radius:0.5rem;
                         text-decoration:none;font-weight:600;font-size:0.875rem;
-                        width:100%;box-sizing:border-box;margin-top:0.25rem;">
+                        width:100%;box-sizing:border-box;margin-top:0.5rem;">
                         🔒 Connect Gmail securely</a>''', unsafe_allow_html=True)
-
-        if source_mode == "📋 Paste & AI-clean":
-            if not ANTHROPIC_AVAILABLE:
-                st.warning("Run `pip install anthropic` to enable this feature.")
-            else:
-                raw_text = st.text_area(
-                    "Paste your bank statement here",
-                    height=180, key="ai_paste_input",
-                    placeholder="Paste any format — PDF copy, SMS history, net banking table…"
-                )
-                if st.button("✨ Clean & Load", key="ai_clean_btn", use_container_width=True,
-                             type="primary"):
-                    if raw_text.strip():
-                        with st.spinner("🔍 Cleaning and structuring your data…"):
-                            result, err = anonymize_statement(raw_text)
-                        if err:
-                            st.error(f"Error: {err}")
-                        else:
-                            try:
-                                from io import StringIO as _StringIO
-                                df_clean = pd.read_csv(_StringIO(result))
-                                df_clean.columns = df_clean.columns.str.strip()
-                                df_clean["Date"]        = pd.to_datetime(df_clean["Date"], errors="coerce", dayfirst=True)
-                                df_clean["Description"] = df_clean["Description"].astype(str).str.strip()
-                                df_clean["Debit"]       = df_clean["Debit"].apply(parse_inr)
-                                df_clean["Credit"]      = df_clean["Credit"].apply(parse_inr)
-                                df_clean["Amount"]      = df_clean["Credit"] - df_clean["Debit"]
-                                df_clean["Type"]        = df_clean["Amount"].apply(lambda x: "Income" if x >= 0 else "Expense")
-                                df_clean["Category"]    = df_clean["Description"].apply(categorize)
-                                df_clean["Source"]      = "AI paste"
-                                df_clean               = df_clean.dropna(subset=["Date"])
-                                df_clean["Date"]        = df_clean["Date"].dt.normalize()
-                                df_clean["Month"]       = df_clean["Date"].dt.to_period("M").astype(str)
-                                df_clean               = df_clean.sort_values("Date").reset_index(drop=True)
-                                st.session_state.stmt_df = df_clean
-                                st.success(f"✅ {len(df_clean):,} transactions loaded into dashboard automatically!")
-                                st.rerun()
-                            except Exception as _ex:
-                                st.error(f"Couldn't parse the data. Try a smaller or cleaner input. ({_ex})")
-                    else:
-                        st.warning("Please paste some statement text first.")
 
         for e in load_errors:
             st.warning(e)
@@ -674,19 +645,6 @@ with st.expander(_exp_label, expanded=not data_loaded):
             new_df = pd.concat(frames, ignore_index=True)
             st.session_state.stmt_df = new_df
             st.success(f"{len(new_df):,} transactions loaded.")
-
-        # Fix 4 — privacy helper lives inside Step 1
-        with st.expander("🔒 Concerned about sharing personal data?"):
-            st.markdown("""Use ChatGPT or Claude to anonymize your statement before uploading.
-
-**Steps:** Copy statement → paste with the prompt below → upload cleaned CSV here.""")
-            st.code("""Convert this bank statement into a CSV with columns:
-Date, Description, Debit, Credit.
-
-Remove or anonymize:
-- Names, Account numbers, PAN details, Employer info
-
-Keep only transaction-level data.""")
 
     # ── Step 2: Enrich — SECONDARY ───────────────────────────────────────────
     with s2:
