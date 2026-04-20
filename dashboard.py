@@ -571,7 +571,7 @@ if not summary_ready:
       </div>
     </div>
     """, unsafe_allow_html=True)
-    st.info("Start with Step 1 — upload a statement or connect Gmail. You can add investments later.", icon="👆")
+
 
 _exp_label = "✅ Data loaded — expand to reload or update" if data_loaded else "📂 Get started — load your statements below"
 with st.expander(_exp_label, expanded=not data_loaded):
@@ -651,14 +651,27 @@ Output CSV only — no extra text.""", language=None)
                     prompt="consent",
                 )
                 st.session_state["gmail_flow"] = flow
-                st.markdown(f'''<a href="{auth_url}" target="_self" style="
-                    display:inline-flex;align-items:center;gap:0.4rem;
-                    padding:0.4rem 1rem;background:#f0f4fa;color:#4a72a8;
-                    border:1px solid #c7d9f0;border-radius:0.5rem;
-                    text-decoration:none;font-weight:600;font-size:0.82rem;">
-                    📧 Connect Gmail instead</a>
-                    <span style="font-size:0.72rem;color:{C_GREY};margin-left:0.5rem;">
-                    — your password is never seen by this app</span>
+                st.markdown(f'''
+                    <a href="{auth_url}" target="_self" style="
+                        display:flex;align-items:center;justify-content:center;gap:0.6rem;
+                        padding:0.65rem 1.25rem;
+                        background:#ffffff;color:#3c4043;
+                        border:1px solid #dadce0;border-radius:0.5rem;
+                        text-decoration:none;font-weight:500;font-size:0.92rem;
+                        box-shadow:0 1px 3px rgba(0,0,0,0.08);
+                        width:100%;box-sizing:border-box;
+                        transition:box-shadow 0.2s;">
+                        <svg width="18" height="18" viewBox="0 0 48 48">
+                          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                        </svg>
+                        Connect Gmail
+                    </a>
+                    <p style="font-size:0.72rem;color:{C_GREY};margin:0.4rem 0 0;text-align:center;">
+                        🔒 Your password is never seen by this app
+                    </p>
                     ''', unsafe_allow_html=True)
 
         for e in load_errors:
