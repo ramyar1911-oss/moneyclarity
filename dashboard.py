@@ -608,54 +608,58 @@ with st.expander(_exp_label, expanded=not data_loaded):
 Remove or anonymize: names, account numbers, PAN details, employer info.
 Output CSV only — no extra text.""", language=None)
 
-        # 📧 Gmail — secondary option
-        with st.expander("📧 Or fetch statements from Gmail instead"):
-            if not GOOGLE_LIBS_AVAILABLE:
-                st.warning("Run `pip install google-auth-oauthlib google-api-python-client` to enable Gmail.")
-            elif "gmail_creds" in st.session_state:
-                st.success("Gmail connected via Google")
-                max_emails = st.slider("Emails to scan", 10, 100, 50, step=10, key="max_emails")
-                col_fetch, col_disc = st.columns(2)
-                with col_fetch:
-                    fetch_clicked = st.button("Fetch Statements", key="fetch_btn", use_container_width=True)
-                with col_disc:
-                    if st.button("Disconnect", key="disc_btn", use_container_width=True):
-                        del st.session_state["gmail_creds"]
-                        st.rerun()
-                if fetch_clicked:
-                    with st.spinner("Scanning Gmail for bank statements…"):
-                        attachments, errs = fetch_gmail_attachments_oauth(
-                            st.session_state["gmail_creds"], max_results=max_emails)
-                    for err in errs:
-                        st.error(err)
-                    if attachments:
-                        for fname, bio in attachments:
-                            bio.name = fname
-                            dff, err = detect_and_load(bio)
-                            if err:
-                                load_errors.append(f"**{fname}:** {err}")
-                            else:
-                                frames.append(dff)
-                    elif not errs:
-                        st.warning("No CSV/XLSX attachments found in matching emails.")
-            else:
-                st.info("Your password is **never seen by this app**. Google handles login entirely.", icon="🔒")
-                flow, err = build_oauth_flow()
-                if err:
-                    st.caption(err)
-                else:
-                    auth_url, _ = flow.authorization_url(
-                        access_type="offline",
-                        include_granted_scopes="true",
-                        prompt="consent",
-                    )
-                    st.session_state["gmail_flow"] = flow
-                    st.markdown(f'''<a href="{auth_url}" target="_self" style="
-                        display:block;text-align:center;padding:0.5rem 1rem;
-                        background:#4a72a8;color:white;border-radius:0.5rem;
-                        text-decoration:none;font-weight:600;font-size:0.875rem;
-                        width:100%;box-sizing:border-box;margin-top:0.5rem;">
-                        🔒 Connect Gmail securely</a>''', unsafe_allow_html=True)
+        # 📧 Gmail — clean inline option
+        st.markdown(f'<div style="display:flex;align-items:center;gap:0.5rem;margin:0.75rem 0 0.5rem;">'
+                    f'<hr style="flex:1;border:none;border-top:1px solid #e5e7eb;margin:0;">'
+                    f'<span style="font-size:0.75rem;color:{C_GREY};white-space:nowrap;">or</span>'
+                    f'<hr style="flex:1;border:none;border-top:1px solid #e5e7eb;margin:0;">'
+                    f'</div>', unsafe_allow_html=True)
+
+        if "gmail_creds" in st.session_state:
+            gc1, gc2, gc3 = st.columns([2, 1, 1])
+            with gc1:
+                st.success("📧 Gmail connected", icon=None)
+            with gc2:
+                fetch_clicked = st.button("Fetch", key="fetch_btn", use_container_width=True)
+            with gc3:
+                if st.button("Disconnect", key="disc_btn", use_container_width=True):
+                    del st.session_state["gmail_creds"]
+                    st.rerun()
+            if fetch_clicked:
+                max_emails = 50
+                with st.spinner("Scanning Gmail for bank statements…"):
+                    attachments, errs = fetch_gmail_attachments_oauth(
+                        st.session_state["gmail_creds"], max_results=max_emails)
+                for err in errs:
+                    st.error(err)
+                if attachments:
+                    for fname, bio in attachments:
+                        bio.name = fname
+                        dff, err = detect_and_load(bio)
+                        if err:
+                            load_errors.append(f"**{fname}:** {err}")
+                        else:
+                            frames.append(dff)
+                elif not errs:
+                    st.warning("No CSV/XLSX attachments found in matching emails.")
+        elif GOOGLE_LIBS_AVAILABLE:
+            flow, err = build_oauth_flow()
+            if not err:
+                auth_url, _ = flow.authorization_url(
+                    access_type="offline",
+                    include_granted_scopes="true",
+                    prompt="consent",
+                )
+                st.session_state["gmail_flow"] = flow
+                st.markdown(f'''<a href="{auth_url}" target="_self" style="
+                    display:inline-flex;align-items:center;gap:0.4rem;
+                    padding:0.4rem 1rem;background:#f0f4fa;color:#4a72a8;
+                    border:1px solid #c7d9f0;border-radius:0.5rem;
+                    text-decoration:none;font-weight:600;font-size:0.82rem;">
+                    📧 Connect Gmail instead</a>
+                    <span style="font-size:0.72rem;color:{C_GREY};margin-left:0.5rem;">
+                    — your password is never seen by this app</span>
+                    ''', unsafe_allow_html=True)
 
         for e in load_errors:
             st.warning(e)
