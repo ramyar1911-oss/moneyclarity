@@ -546,8 +546,31 @@ summary_ready = "summary_df" in st.session_state
 mf_text = st.session_state.get("mf_notif", "")
 rd_text = st.session_state.get("rd_notif", "")
 
-# Fix 3 — guiding banner
-if not data_loaded:
+# ── Welcome tile — shown above loader when no data yet ───────────────────────
+if not summary_ready:
+    st.markdown("""
+    <div class="welcome">
+      <h2>Welcome to Money Clarity OS 👋</h2>
+      <p>Your personal finance dashboard — get a clear picture of where your money goes, automatically.</p>
+      <div class="steps-row">
+        <div class="step-card">
+          <div class="step-num">📁</div>
+          <div class="step-title">Step 1 — Load</div>
+          <div class="step-desc">Upload your bank or credit card statement CSV</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">📲</div>
+          <div class="step-title">Step 2 — Enrich</div>
+          <div class="step-desc">Paste MF/SIP alerts for investment tracking</div>
+        </div>
+        <div class="step-card">
+          <div class="step-num">✨</div>
+          <div class="step-title">Step 3 — Generate</div>
+          <div class="step-desc">Your monthly dashboard appears instantly</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
     st.info("Start with Step 1 — upload a statement or connect Gmail. You can add investments later.", icon="👆")
 
 _exp_label = "✅ Data loaded — expand to reload or update" if data_loaded else "📂 Get started — load your statements below"
@@ -577,18 +600,13 @@ with st.expander(_exp_label, expanded=not data_loaded):
                 else:
                     frames.append(dff)
 
-        # 🟡 Option B — inline privacy helper
-        st.markdown(f'<p style="font-size:0.78rem;color:{C_GREY};margin-top:0.4rem;">'
-                    f'👉 You can upload directly, or anonymize your data using ChatGPT / Claude before uploading.</p>',
+        # 🟡 Inline privacy helper — sits right below the uploader
+        st.markdown(f'<p style="font-size:0.78rem;color:{C_GREY};margin-top:0.25rem;">'
+                    f'🔒 Prefer to remove personal details first? Use this prompt in ChatGPT or Claude, then upload the result:</p>',
                     unsafe_allow_html=True)
-        with st.expander("Show anonymization prompt"):
-            st.code("""Convert this bank statement into a CSV with columns:
-Date, Description, Debit, Credit.
-
-Remove or anonymize:
-- Names, Account numbers, PAN details, Employer info
-
-Keep only transaction-level data. Output CSV only, no extra text.""")
+        st.code("""Convert this bank statement into a CSV with columns: Date, Description, Debit, Credit.
+Remove or anonymize: names, account numbers, PAN details, employer info.
+Output CSV only — no extra text.""", language=None)
 
         # 📧 Gmail — secondary option
         with st.expander("📧 Or fetch statements from Gmail instead"):
@@ -685,29 +703,6 @@ summary_ready = "summary_df" in st.session_state
 
 # ── Welcome / empty state ─────────────────────────────────────────────────────
 if not summary_ready:
-    st.markdown("""
-    <div class="welcome">
-      <h2>Welcome to Money Clarity OS 👋</h2>
-      <p>Your personal finance dashboard — get a clear picture of where your money goes, automatically.</p>
-      <div class="steps-row">
-        <div class="step-card">
-          <div class="step-num">📁</div>
-          <div class="step-title">Step 1 — Load</div>
-          <div class="step-desc">Upload your bank or credit card statement CSV</div>
-        </div>
-        <div class="step-card">
-          <div class="step-num">📲</div>
-          <div class="step-title">Step 2 — Enrich</div>
-          <div class="step-desc">Paste MF/SIP alerts for investment tracking</div>
-        </div>
-        <div class="step-card">
-          <div class="step-num">✨</div>
-          <div class="step-title">Step 3 — Generate</div>
-          <div class="step-desc">Your monthly dashboard appears instantly</div>
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
 
     st.info("Upload a bank statement or connect Gmail above to see your real numbers here.", icon="💡")
 
